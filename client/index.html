@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ZERO TRACE</title>
+
+  <!-- MediaPipe CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Stalinist+One&display=swap');
+
+    :root {
+      --bg: #050510;
+      --accent: #df00ff;
+      --glass-bg: rgba(10, 15, 30, 0.5);
+      --glass-border: rgba(255,255,255,0.1);
+      --blur: blur(18px);
+      --font-display: 'Stalinist One', cursive;
+      --font-mono: 'Rajdhani', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font-mono);
+      background: var(--bg);
+      color: #fff;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ── Video Layer ── */
+    .video-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    #inputVideo {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      filter: brightness(0.55) contrast(1.15);
+      z-index: 0;
+    }
+
+    #bgCanvas, #mainCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      pointer-events: none;
+    }
+
+    #bgCanvas   { z-index: 1; }
+    #mainCanvas { z-index: 5; }
+
+    /* ── HUD ── */
+    #hud {
+      position: absolute;
+      top: 22px;
+      left: 22px;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      pointer-events: none;
+      transition: opacity 0.4s;
+    }
+
+    #hud.hidden { opacity: 0; }
+
+    .panel {
+      background: var(--glass-bg);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.04);
+      min-width: 200px;
+    }
+
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.82rem;
+      color: rgba(255,255,255,0.65);
+      margin-bottom: 8px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .stat:last-child { margin-bottom: 0; }
+    .stat .val {
+      font-weight: 700;
+      color: var(--accent);
+      text-shadow: 0 0 8px var(--accent);
+      font-family: var(--font-display);
+      font-size: 0.78rem;
+    }
+
+    /* Room badge */
+    #roomBadge {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.4);
+      margin-top: 6px;
+      letter-spacing: 0.1em;
+    }
+
+    /* ── Remote Users ── */
+    #remoteUsers {
+      position: absolute;
+      top: 22px;
+      right: 22px;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .remote-user-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* ── Theme Bar ── */
+    #themes {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      gap: 8px;
+      background: var(--glass-bg);
+      backdrop-filter: var(--blur);
+      border: 1px solid var(--glass-border);
+      border-radius: 32px;
+      padding: 8px 12px;
+      transition: opacity 0.4s;
+    }
+
+    #themes.hidden { opacity: 0; pointer-events: none; }
+
+    .theme-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: rgba(255,255,255,0.6);
+      padding: 7px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: all 0.25s ease;
+    }
+
+    .theme-btn:hover {
+      color: #fff;
+      background: rgba(255,255,255,0.08);
+    }
+
+    .theme-btn.active {
+      background: rgba(255,255,255,0.14);
+      border-color: rgba(255,255,255,0.3);
+      color: #fff;
+      text-shadow: 0 0 10px #fff;
+    }
+
+    /* ── Connection Status ── */
+    #connStatus {
+      position: absolute;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 20px;
+      background: var(--glass-bg);
+      backdrop-filter: var(--blur);
+      border: 1px solid var(--glass-border);
+      color: rgba(255,255,255,0.4);
+      pointer-events: none;
+      transition: opacity 0.4s;
+    }
+
+    #connStatus.hidden { opacity: 0; }
+    #connStatus.connected { color: #00ffcc; }
+    #connStatus.disconnected { color: #ff4466; }
+
+    /* ── Error Toast ── */
+    #errorToast {
+      position: absolute;
+      top: 22px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-80px);
+      z-index: 50;
+      background: rgba(255, 40, 60, 0.85);
+      backdrop-filter: var(--blur);
+      border: 1px solid rgba(255,60,80,0.4);
+      border-radius: 10px;
+      padding: 12px 24px;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      letter-spacing: 0.06em;
+      transition: transform 0.4s cubic-bezier(0.34,1.56,0.64,1);
+      pointer-events: none;
+    }
+
+    #errorToast.visible {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── Start Overlay ── */
+    #startOverlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(3, 4, 16, 0.92);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      backdrop-filter: blur(12px);
+      transition: opacity 0.6s ease;
+    }
+
+    #startOverlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #startOverlay h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 6vw, 4rem);
+      font-weight: 700;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #df00ff, #ff007f, #7b00ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    #startOverlay p {
+      color: rgba(255,255,255,0.4);
+      font-size: 0.88rem;
+      letter-spacing: 0.1em;
+      margin-bottom: 50px;
+      text-align: center;
+      max-width: 360px;
+      line-height: 1.6;
+    }
+
+    /* Room Input Row */
+    .room-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 28px;
+      align-items: center;
+    }
+
+    .room-input {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      letter-spacing: 0.1em;
+      padding: 12px 18px;
+      outline: none;
+      width: 200px;
+      transition: border-color 0.2s;
+    }
+
+    .room-input::placeholder { color: rgba(255,255,255,0.25); }
+    .room-input:focus { border-color: rgba(0, 255, 204, 0.5); }
+
+    .start-btn {
+      padding: 14px 38px;
+      font-size: 0.9rem;
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #df00ff 0%, #7b00ff 100%);
+      border: none;
+      color: #050510;
+      border-radius: 32px;
+      cursor: pointer;
+      box-shadow: 0 0 28px rgba(223, 0, 255, 0.45);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .start-btn:hover {
+      transform: scale(1.04);
+      box-shadow: 0 0 40px rgba(0, 255, 204, 0.55);
+    }
+
+    .start-btn:active { transform: scale(0.98); }
+  </style>
+</head>
+<body>
+
+<!-- ── START OVERLAY ── -->
+<div id="startOverlay">
+  <h1>Zero Trace</h1>
+  <p>Multi-user collaborative hand tracking experience.<br/>Grant camera access and enter a room to begin.</p>
+
+  <div class="room-row">
+  <input class="room-input" id="roomInput" type="text" placeholder="Your name" maxlength="20" />
+  <input class="room-input" id="passcodeInput" type="password" placeholder="Passcode" maxlength="20" />
+  <button class="start-btn" id="startBtn">Enter</button>
+</div>
+</div>
+
+<!-- ── VIDEO LAYER ── -->
+<div class="video-container">
+  <video id="inputVideo" autoplay playsinline></video>
+  <canvas id="bgCanvas"></canvas>
+  <canvas id="mainCanvas"></canvas>
+</div>
+
+<!-- ── HUD ── -->
+<div id="hud" class="hidden">
+  <div class="panel">
+    <div class="stat">Hands <span class="val" id="ui-hands">0</span></div>
+    <div class="stat">FPS   <span class="val" id="ui-fps">—</span></div>
+    <div class="stat">Users <span class="val" id="ui-users">1</span></div>
+  </div>
+  <div class="panel">
+    <div class="stat">Gesture <span class="val" id="ui-gesture">—</span></div>
+    <div class="stat">Spread  <span class="val" id="ui-spread">0%</span></div>
+  </div>
+  <div id="roomBadge">Room: <span id="ui-room">—</span></div>
+</div>
+
+<!-- Remote user dots -->
+<div id="remoteUsers"></div>
+
+<!-- ── THEMES ── -->
+<div id="themes" class="hidden">
+  <button class="theme-btn active" data-theme="Rainbow">Rainbow</button>
+  <button class="theme-btn" data-theme="Cyberpunk">Cyberpunk</button>
+  <button class="theme-btn" data-theme="Lava">Lava</button>
+  <button class="theme-btn" data-theme="Ocean">Ocean</button>
+  <button class="theme-btn" data-theme="Galaxy">Galaxy</button>
+</div>
+
+<!-- Connection Status -->
+<div id="connStatus" class="hidden">⬤ Connecting…</div>
+
+<!-- Error Toast -->
+<div id="errorToast"></div>
+
+<!-- ── APP ENTRY (ES Modules) ── -->
+<script type="module">
+  import { HandTracker }      from './core/HandTracker.js';
+  import { AudioEngine }      from './core/AudioEngine.js';
+  import { GestureDetector }  from './core/GestureDetector.js';
+  import { RenderLoop }       from './core/RenderLoop.js';
+  import { ThemeManager }     from './themes/ThemeManager.js';
+  import { SocketClient }     from './network/SocketClient.js';
+  import { showError }        from './core/ui.js';
+
+  // ── DOM refs ──
+  const videoEl    = document.getElementById('inputVideo');
+  const bgCanvas   = document.getElementById('bgCanvas');
+  const mainCanvas = document.getElementById('mainCanvas');
+  const overlay    = document.getElementById('startOverlay');
+  const hudEl      = document.getElementById('hud');
+  const themesEl   = document.getElementById('themes');
+  const connEl     = document.getElementById('connStatus');
+  const roomInput  = document.getElementById('roomInput');
+
+  // ── UI stat refs ──
+  const uiHands   = document.getElementById('ui-hands');
+  const uiFps     = document.getElementById('ui-fps');
+  const uiGesture = document.getElementById('ui-gesture');
+  const uiSpread  = document.getElementById('ui-spread');
+  const uiUsers   = document.getElementById('ui-users');
+  const uiRoom    = document.getElementById('ui-room');
+
+  // ── Modules ──
+  const themes    = new ThemeManager();
+  const audio     = new AudioEngine();
+  const gesture   = new GestureDetector();
+  const socket    = new SocketClient();
+  let   renderer  = null;
+  let   tracker   = null;
+
+  // ── Remote hand state (keyed by userId) ──
+  const remoteHands = new Map();
+
+  // ── Theme switcher ──
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      themes.setTheme(e.target.dataset.theme);
+    });
+  });
+
+  // ── Start button ──
+  document.getElementById('startBtn').addEventListener('click', async () => {
+    const roomId = roomInput.value.trim() || 'default';
+const passcode = document.getElementById('passcodeInput').value.trim();
+if (!passcode) { showError('Passcode is required.'); return; }
+
+    try {
+      await audio.init();
+    } catch(e) {
+      showError('Audio init failed — continuing without sound.');
+    }
+
+    overlay.classList.add('hidden');
+    hudEl.classList.remove('hidden');
+    themesEl.classList.remove('hidden');
+    connEl.classList.remove('hidden');
+    uiRoom.textContent = roomId;
+
+    // ── WebSocket connection ──
+    const wsUrl = `ws://${location.hostname}:8080`;
+    socket.connect(wsUrl);
+
+    socket.on('CONNECTED', ({ userId }) => {
+      connEl.textContent = `⬤ Connected — ${userId.slice(0,8)}`;
+      connEl.className = 'connected';
+      socket.send('JOIN_ROOM', { roomId, passcode });
+    });
+
+    socket.on('ROOM_STATE', ({ users }) => {
+      uiUsers.textContent = users.length;
+      updateRemoteDots(users.length - 1);
+    });
+
+    socket.on('HANDS_UPDATE', ({ userId, landmarks }) => {
+      if (landmarks && landmarks.length > 0) {
+        remoteHands.set(userId, landmarks);
+      } else {
+        remoteHands.delete(userId);
+      }
+    });
+
+    socket.on('USER_LEFT', ({ userId }) => {
+      remoteHands.delete(userId);
+    });
+
+    socket.on('ERROR', ({ message }) => showError(message));
+
+    socket.on('DISCONNECTED', () => {
+      connEl.textContent = '⬤ Disconnected — retrying…';
+      connEl.className = 'disconnected';
+    });
+
+    // ── Renderer ──
+    renderer = new RenderLoop(bgCanvas, mainCanvas, themes);
+    renderer.onFps(fps => { uiFps.textContent = fps; });
+
+    // ── Hand tracker ──
+    tracker = new HandTracker(videoEl);
+
+    tracker.onResults(results => {
+      const landmarks = results.multiHandLandmarks || [];
+      uiHands.textContent = landmarks.length;
+
+      // Gesture detection
+      const gestureInfo = gesture.detect(landmarks);
+      uiGesture.textContent = gestureInfo.name;
+      uiSpread.textContent  = gestureInfo.spread + '%';
+
+      if (gestureInfo.pinch) {
+  renderer.triggerShockwave(gestureInfo.pinchPos, themes.current());
+  renderer.shootBullet(gestureInfo.pinchPos, landmarks[0]);
+  audio.triggerZap();
+}
+
+      // Audio hum from 2-hand distance
+      audio.updateHum(landmarks);
+
+      // Renderer gets local + remote hands
+      renderer.setHands(landmarks, remoteHands);
+
+      // Broadcast our hands to server (throttled inside SocketClient)
+      socket.sendThrottled('HAND_DATA', { landmarks }, 30);
+    });
+
+    tracker.start().catch(err => showError(err.message));
+    renderer.start();
+  });
+
+  function updateRemoteDots(count) {
+    const container = document.getElementById('remoteUsers');
+    container.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const dot = document.createElement('div');
+      dot.className = 'remote-user-dot';
+      container.appendChild(dot);
+    }
+  }
+</script>
+</body>
+</html>
